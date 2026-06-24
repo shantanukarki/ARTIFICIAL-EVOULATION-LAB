@@ -1,5 +1,9 @@
 import random
 import pygame
+import pygame.font
+from core.environment import Environment
+from domains.ecology.rules.eat_rule import EatRule
+from domains.ecology.rules.move_rule import MoveRule
 
 from configs.settings import (
     WORLD_WIDTH,
@@ -9,18 +13,32 @@ from configs.settings import (
     INITIAL_FOOD,
     FOOD_SPAWN_RATE,
     MAX_ORGANISMS,
+    INITIAL_PREDATORS,
+    MAX_PREDATORS,
 )
 
 from agents.organism import Organism
 
 from world.renderer import Renderer
 
+from agents.predator import Predator
 
-class World:
+
+class World(Environment):
 
     def __init__(self):
+        
+        super().__init__()
+
+        self.paused = False
+        self.rules = [
+            EatRule(),
+            MoveRule()
+                ]
 
         self.organisms = []
+
+        self.predators = []
 
         self.food = []
 
@@ -29,6 +47,7 @@ class World:
         self.speed_history = []
 
         self.renderer = Renderer()
+        self.selected_organism = None
 
         # Spawn organisms
         for _ in range(INITIAL_ORGANISMS):
@@ -39,6 +58,16 @@ class World:
             )
 
             self.organisms.append(organism)
+
+        #predator spawn
+        for _ in range(INITIAL_PREDATORS):
+
+            predator = Predator(
+               random.randint(0, WORLD_WIDTH),
+               random.randint(0, WORLD_HEIGHT)
+            )
+
+            self.predators.append(predator)    
 
         # Spawn food
         for _ in range(INITIAL_FOOD):
@@ -68,8 +97,40 @@ class World:
             self.food.append([food_x, food_y])
 
     def update(self):
+        self.actions = []
+
+        for organism in self.organisms:
+
+            action = organism.decide(self)
+
+            if action:
+
+                self.actions.append(
+
+                    (
+
+                    organism,
+
+                    action
+
+                    )
+
+                )
 
         self.tick += 1
+
+        new_predators = []
+
+        for predator in self.predators:
+
+            child = predator.update(self.organisms)
+
+            if child:
+                new_predators.append(child)
+
+        if len(self.predators) < MAX_PREDATORS:
+
+            self.predators.extend(new_predators)
 
         # Random food spawning
         if len(self.food) < 250:
@@ -79,15 +140,23 @@ class World:
 
         new_organisms = []
         child = None
-
+        
         for organism in self.organisms:
 
-          child = organism.update(
-             self.food,
-             self.organisms
-          )
+            organism.update_drives(
 
-          if child and len(self.organisms) < MAX_ORGANISMS:
+                self.predators
+
+            )
+
+
+            child = organism.update(self.food, self.organisms)
+
+            if (child and len(self.organisms) < MAX_ORGANISMS):
+
+                new_organisms.append(child)
+
+        if child and len(self.organisms) < MAX_ORGANISMS:
            new_organisms.append(child)
 
         self.organisms.extend(new_organisms)
@@ -98,6 +167,16 @@ class World:
             for organism in self.organisms
             if not organism.is_dead()
         ]
+
+        self.predators = [
+            predator
+            for predator in self.predators
+            if not predator.is_dead()
+        ]
+
+        for rule in self.rules:
+
+            rule.apply(self)
 
         if self.tick % 100 == 0:
 
@@ -121,8 +200,10 @@ class World:
             print(
             f"Tick: {self.tick} | "
             f"Population: {len(self.organisms)} | "
+            f"Predators: {len(self.predators)} |"
             f"Avg Speed: {avg_speed:.2f}"
             )
+
 
     def run(self):
 
@@ -134,15 +215,49 @@ class World:
 
             for event in pygame.event.get():
 
-                if event.type == pygame.QUIT:
+                if event.type == pygame.KEYDOWN:
+
+                    if event.key == pygame.K_SPACE:
+
+                        self.paused = not self.paused
+
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+
+                    if event.button == 1:
+
+                        mx, my = pygame.mouse.get_pos()
+
+                        self.selected_organism = None
+
+
+                        for organism in self.organisms:
+
+                            dx = organism.x - mx
+
+                            dy = organism.y - my
+
+                            distance = (dx*dx + dy*dy)**0.5
+
+
+                            if distance < 10:
+
+                                self.selected_organism = organism
+
+                                break
+
+                elif event.type == pygame.QUIT:
                     running = False
 
-            self.update()
+            if not self.paused:
+
+                self.update()
 
             self.renderer.draw(
                 self.organisms,
+                self.predators,
                 self.food,
-                self.tick
+                self.tick,
+                self.selected_organism
             )
 
             clock.tick(FPS)
